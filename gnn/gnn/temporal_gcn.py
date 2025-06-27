@@ -50,25 +50,34 @@ class TemporalGCN(nn.Module):
         return torch.tensor(edges, dtype=torch.long).t().contiguous()
 
     def forward(self, x):
-        # Save original shape for reconstruction
-        original_shape = x.shape
-        
-        # Handle different input dimensions
-        if x.dim() == 2:
-            # Add timestep dimension: [batch, features] -> [batch, 1, features]
-            x = x.unsqueeze(1)
-        elif x.dim() == 4:
-            # Flatten extra dimension: [batch, channels, 1, timesteps] -> [batch, channels, timesteps]
-            x = x.squeeze(2)
-        
-        # Now x should be 3D: [batch, channels, timesteps]
-        # Convert to [batch, channels, timesteps] for Conv1d
-        if x.size(1) != self.input_dim:
-            # Input is [batch, timesteps, channels] -> permute to [batch, channels, timesteps]
-            x = x.permute(0, 2, 1)
-        
+        # ==== BEGIN: Support PyG Data/Batch or plain Tensor ====
+        if hasattr(x, 'x'):
+            # x is a torch_geometric.data.Data or Batch
+            x_feat = x.x
+            batch = x.batch if hasattr(x, 'batch') else None
+            if x_feat.dim() == 2 and batch is not None:
+                batch_size = batch.max().item() + 1
+                time_steps = torch.bincount(batch)[0].item()
+                x_feat = x_feat.view(batch_size, time_steps, -1)
+            x = x_feat
+        # ==== END: Support PyG Data/Batch or plain Tensor ====
+
+        # --- Ensure input is [batch, channels, time] ---
+        if x.dim() == 3:
+            # x.shape: [batch, time, channels] or [batch, channels, time]
+            if x.shape[2] == self.input_dim:
+                # [batch, time, channels] -> [batch, channels, time]
+                x = x.permute(0, 2, 1)
+            elif x.shape[1] == self.input_dim:
+                # [batch, channels, time] -> already correct
+                pass
+            else:
+                raise RuntimeError(f"Unexpected input shape {x.shape}, input_dim={self.input_dim}")
+        else:
+            raise RuntimeError(f"Expected 3D input, got {x.shape}")
+
         batch_size, channels, timesteps = x.shape
-        
+
         # Temporal convolution: [batch, features, timesteps]
         x = self.temporal_conv(x)  # Output: [batch, 32, timesteps//4]
         _, features, reduced_timesteps = x.shape
