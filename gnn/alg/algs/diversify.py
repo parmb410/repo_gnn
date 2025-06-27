@@ -245,7 +245,7 @@ class Diversify(Algorithm):
             alpha = min(1.0, self.global_step / total_steps)
         disc_input = Adver_network.ReverseLayerF.apply(all_z, alpha)
         disc_out = self.discriminator(disc_input)
-        disc_labels = data[4].to(device).long()
+        disc_labels = data[2].to(device).long()
         disc_labels = torch.clamp(disc_labels, 0, self.args.latent_domain_num - 1)
         disc_loss = F.cross_entropy(disc_out, disc_labels)
         all_preds = self.classifier(all_z)
