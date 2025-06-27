@@ -266,6 +266,45 @@ def get_act_dataloader(args):
             transform=transform
         )
         
+        # --- INSERT HERE: Force EMG channel correction (for npy bug) ---
+        if args.dataset == "emg":
+            # If tdata.x exists and is a numpy array or tensor
+            if hasattr(tdata, 'x'):
+                x = tdata.x
+                if isinstance(x, np.ndarray):
+                    # [samples, 1, 200] or [samples, 200, 1] to [samples, 8, 200]
+                    if x.shape[1] == 1 and x.shape[2] == 200:
+                        raise ValueError(
+                            f"EMG data loaded with shape {x.shape}: only 1 channel found! "
+                            "Please ensure your .npy file has shape [N,8,200] for 8 EMG channels."
+                        )
+                    elif x.shape[1] == 200 and x.shape[2] == 1:
+                        raise ValueError(
+                            f"EMG data loaded with shape {x.shape}: only 1 channel found! "
+                            "Please ensure your .npy file has shape [N,8,200] for 8 EMG channels."
+                        )
+                    elif x.shape[1] == 8 and x.shape[2] == 200:
+                        pass  # OK
+                    elif x.shape[1] == 200 and x.shape[2] == 8:
+                        # Permute to [N, 8, 200]
+                        tdata.x = np.transpose(x, (0,2,1))
+                elif isinstance(x, torch.Tensor):
+                    if x.shape[1] == 1 and x.shape[2] == 200:
+                        raise ValueError(
+                            f"EMG tensor loaded with shape {x.shape}: only 1 channel found! "
+                            "Please ensure your data is [N,8,200]."
+                        )
+                    elif x.shape[1] == 200 and x.shape[2] == 1:
+                        raise ValueError(
+                            f"EMG tensor loaded with shape {x.shape}: only 1 channel found! "
+                            "Please ensure your data is [N,8,200]."
+                        )
+                    elif x.shape[1] == 8 and x.shape[2] == 200:
+                        pass
+                    elif x.shape[1] == 200 and x.shape[2] == 8:
+                        tdata.x = x.permute(0,2,1)
+        # --- END EMG SHAPE CORRECTION ---
+
         if i in args.test_envs:
             target_datalist.append(tdata)
         else:
@@ -275,8 +314,6 @@ def get_act_dataloader(args):
     
     # Combine source datasets
     tdata = combindataset(args, source_datasetlist)
-    
-    # Wrap in consistent format adapter AFTER combining
     tdata = ConsistentFormatWrapper(tdata)
     
     # Split source data into train/validation
@@ -285,27 +322,20 @@ def get_act_dataloader(args):
     
     l = len(tdata.labels)
     indexall = np.arange(l)
-    
-    # Shuffle indices for train/validation split
     np.random.seed(args.seed)
     np.random.shuffle(indexall)
     ted = int(l * rate)
     indextr, indexval = indexall[ted:], indexall[:ted]
     
-    # Create train and validation subsets
     tr = SafeSubset(tdata, indextr)
     val = SafeSubset(tdata, indexval)
     
     # Combine target datasets
     targetdata = combindataset(args, target_datalist)
-    
-    # Wrap target data as well
     targetdata = ConsistentFormatWrapper(targetdata)
     
-    # Create data loaders
     loaders = get_dataloader(args, tr, val, targetdata)
     return (*loaders, tr, val, targetdata)
-
 def get_curriculum_loader(args, algorithm, train_dataset, val_dataset, stage, loader_class=None):
     """
     Create a curriculum data loader based on domain difficulty
