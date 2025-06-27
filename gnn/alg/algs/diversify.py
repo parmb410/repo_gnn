@@ -13,7 +13,6 @@ from network import Adver_network, common_network
 from alg.algs.base import Algorithm
 from loss.common_loss import Entropylogits
 
-# ========== ADD THIS UTILITY ==========
 def to_device(batch, device):
     if hasattr(batch, 'to') and not isinstance(batch, torch.Tensor):
         return batch.to(device)
@@ -21,7 +20,6 @@ def to_device(batch, device):
         return batch.to(device).float()
     else:
         raise ValueError(f"Unknown batch type: {type(batch)}")
-# ======================================
 
 def transform_for_gnn(x):
     if x.dim() == 4:
@@ -225,11 +223,7 @@ class Diversify(Algorithm):
             alpha = min(1.0, self.global_step / total_steps)
         disc_input = Adver_network.ReverseLayerF.apply(all_z, alpha)
         disc_out = self.discriminator(disc_input)
-        # Robust: support 3 or 5-element input
-        if len(data) > 4:
-            disc_labels = data[4].to(device).long()
-        else:
-            disc_labels = torch.zeros_like(all_y)
+        disc_labels = data[4].to(device).long()
         disc_labels = torch.clamp(disc_labels, 0, self.args.latent_domain_num - 1)
         disc_loss = F.cross_entropy(disc_out, disc_labels)
         all_preds = self.classifier(all_z)
@@ -247,11 +241,11 @@ class Diversify(Algorithm):
         all_x = to_device(minibatches[0], device)
         all_x = self.ensure_correct_dimensions(all_x)
         all_c = minibatches[1].to(device).long()
-        # Robust fix: support both [x, y, d] and [x, y, d, _, pd_label]
+        # For this call, domain labels may be at minibatches[2]
         if len(minibatches) >= 5:
             all_d = minibatches[4].to(device).long()
         else:
-            all_d = torch.zeros_like(all_c)
+            all_d = minibatches[2].to(device).long()
         n_domains = self.args.latent_domain_num
         all_d = torch.clamp(all_d, 0, n_domains-1)
         all_y = all_d * self.args.num_classes + all_c
@@ -261,6 +255,20 @@ class Diversify(Algorithm):
         if self.explain_mode:
             all_z = all_z.clone()
         all_preds = self.aclassifier(all_z)
+
+        # === BEGIN SHAPE PATCH ===
+        print(f"all_preds shape: {all_preds.shape}, all_y shape: {all_y.shape}")
+        if all_preds.shape[0] != all_y.shape[0]:
+            batch_size = all_y.shape[0]
+            if all_preds.shape[0] % batch_size == 0:
+                time_steps = all_preds.shape[0] // batch_size
+                all_preds = all_preds.view(batch_size, time_steps, -1)
+                all_preds = all_preds.mean(dim=1)  # mean over time_steps
+                print(f"Reshaped/pool all_preds to {all_preds.shape}")
+            else:
+                raise ValueError(f"all_preds shape {all_preds.shape} and all_y shape {all_y.shape} not compatible.")
+        # === END SHAPE PATCH ===
+
         classifier_loss = F.cross_entropy(all_preds, all_y)
         opt.zero_grad()
         classifier_loss.backward()
