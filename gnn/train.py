@@ -25,6 +25,27 @@ class DomainAdversarialLoss(nn.Module):
         preds = self.classifier(features).squeeze()
         return self.loss_fn(preds, labels.float())
 
+def fix_emg_shape(x):
+    """
+    Ensures input x is [batch, 8, 200] for GNN.
+    Accepts: [batch, 1, 200], [batch, 200, 1], [batch, 8, 200], [batch, 200, 8].
+    Returns: [batch, 8, 200]
+    """
+    if isinstance(x, torch.Tensor):
+        if x.dim() == 3:
+            if x.shape[1] == 1 and x.shape[2] == 200:
+                # [batch, 1, 200] -> [batch, 8, 200] (repeat across channels)
+                x = x.repeat(1, 8, 1)
+            elif x.shape[1] == 200 and x.shape[2] == 1:
+                # [batch, 200, 1] -> [batch, 200, 8], then permute to [batch, 8, 200]
+                x = x.repeat(1, 1, 8).permute(0, 2, 1)
+            elif x.shape[1] == 8 and x.shape[2] == 200:
+                pass  # correct shape
+            elif x.shape[1] == 200 and x.shape[2] == 8:
+                x = x.permute(0, 2, 1)
+        # If PyG Batch object, skip
+    return x
+
 def main(args):
     set_random_seed(args.seed)
     print_environ()
@@ -90,6 +111,7 @@ def main(args):
         for x, y, d in train_loader:
             if args.use_gnn:
                 x = x.to(args.device)
+                x = fix_emg_shape(x)
             else:
                 x = x.to(args.device).float()
             y = y.to(args.device)
@@ -100,6 +122,7 @@ def main(args):
         for x, y, d in train_loader:
             if args.use_gnn:
                 x = x.to(args.device)
+                x = fix_emg_shape(x)
             else:
                 x = x.to(args.device).float()
             y = y.to(args.device)
@@ -112,6 +135,7 @@ def main(args):
         for x, y, d in train_loader:
             if args.use_gnn:
                 x = x.to(args.device)
+                x = fix_emg_shape(x)
             else:
                 x = x.to(args.device).float()
             y = y.to(args.device)
