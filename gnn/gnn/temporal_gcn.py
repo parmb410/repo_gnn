@@ -49,6 +49,28 @@ class TemporalGCN(nn.Module):
             edges.append([i+1, i])
         return torch.tensor(edges, dtype=torch.long).t().contiguous()
 
+    def _fix_emg_shape(self, x):
+        """
+        Ensures input x is [batch, 8, 200] for EMG.
+        Accepts: [batch, 1, 200], [batch, 200, 1], [batch, 8, 200], [batch, 200, 8].
+        Returns: [batch, 8, 200]
+        """
+        if isinstance(x, torch.Tensor):
+            if x.dim() == 3:
+                # [batch, 1, 200] --> [batch, 8, 200]  (repeat along channel)
+                if x.shape[1] == 1 and x.shape[2] == 200:
+                    x = x.repeat(1, 8, 1)
+                # [batch, 200, 1] --> [batch, 200, 8] --> [batch, 8, 200]
+                elif x.shape[1] == 200 and x.shape[2] == 1:
+                    x = x.repeat(1, 1, 8).permute(0, 2, 1)
+                # [batch, 200, 8] --> [batch, 8, 200]
+                elif x.shape[1] == 200 and x.shape[2] == 8:
+                    x = x.permute(0, 2, 1)
+                # [batch, 8, 200] --> correct
+                elif x.shape[1] == 8 and x.shape[2] == 200:
+                    pass
+        return x
+
     def forward(self, x):
         # ==== BEGIN: Support PyG Data/Batch or plain Tensor ====
         if hasattr(x, 'x'):
@@ -61,6 +83,9 @@ class TemporalGCN(nn.Module):
                 x_feat = x_feat.view(batch_size, time_steps, -1)
             x = x_feat
         # ==== END: Support PyG Data/Batch or plain Tensor ====
+
+        # --- EMG channel fix: always [batch, 8, 200] ---
+        x = self._fix_emg_shape(x)
 
         # --- Ensure input is [batch, channels, time] ---
         if x.dim() == 3:
