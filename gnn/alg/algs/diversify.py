@@ -144,7 +144,29 @@ class Diversify(Algorithm):
             z1 = z1.clone()
         disc_in1 = Adver_network.ReverseLayerF.apply(z1, self.args.alpha1)
         disc_out1 = self.ddiscriminator(disc_in1)
+        # ==== BATCH ALIGNMENT for disc_out1 ====
+        if disc_out1.shape[0] != all_d1.shape[0]:
+            batch_size = all_d1.shape[0]
+            if disc_out1.shape[0] % batch_size == 0:
+                t = disc_out1.shape[0] // batch_size
+                if disc_out1.dim() > 1:
+                    disc_out1 = disc_out1.view(batch_size, t, -1).mean(dim=1)
+                else:
+                    disc_out1 = disc_out1.view(batch_size, t).mean(dim=1)
+            else:
+                raise ValueError(f"disc_out1 shape {disc_out1.shape} and all_d1 shape {all_d1.shape} not compatible.")
         cd1 = self.dclassifier(z1)
+        # ==== BATCH ALIGNMENT for cd1 ====
+        if cd1.shape[0] != all_c1.shape[0]:
+            batch_size = all_c1.shape[0]
+            if cd1.shape[0] % batch_size == 0:
+                t = cd1.shape[0] // batch_size
+                if cd1.dim() > 1:
+                    cd1 = cd1.view(batch_size, t, -1).mean(dim=1)
+                else:
+                    cd1 = cd1.view(batch_size, t).mean(dim=1)
+            else:
+                raise ValueError(f"cd1 shape {cd1.shape} and all_c1 shape {all_c1.shape} not compatible.")
         disc_loss = F.cross_entropy(disc_out1, all_d1, reduction='mean')
         ent_loss = Entropylogits(cd1) * self.args.lam + self.criterion(cd1, all_c1)
         loss = ent_loss + self.lambda_dis * disc_loss
@@ -241,7 +263,6 @@ class Diversify(Algorithm):
         all_x = to_device(minibatches[0], device)
         all_x = self.ensure_correct_dimensions(all_x)
         all_c = minibatches[1].to(device).long()
-        # For this call, domain labels may be at minibatches[2]
         if len(minibatches) >= 5:
             all_d = minibatches[4].to(device).long()
         else:
@@ -255,20 +276,14 @@ class Diversify(Algorithm):
         if self.explain_mode:
             all_z = all_z.clone()
         all_preds = self.aclassifier(all_z)
-
-        # === BEGIN SHAPE PATCH ===
-        print(f"all_preds shape: {all_preds.shape}, all_y shape: {all_y.shape}")
+        # ==== BATCH ALIGNMENT for all_preds ====
         if all_preds.shape[0] != all_y.shape[0]:
             batch_size = all_y.shape[0]
             if all_preds.shape[0] % batch_size == 0:
                 time_steps = all_preds.shape[0] // batch_size
-                all_preds = all_preds.view(batch_size, time_steps, -1)
-                all_preds = all_preds.mean(dim=1)  # mean over time_steps
-                print(f"Reshaped/pool all_preds to {all_preds.shape}")
+                all_preds = all_preds.view(batch_size, time_steps, -1).mean(dim=1)
             else:
                 raise ValueError(f"all_preds shape {all_preds.shape} and all_y shape {all_y.shape} not compatible.")
-        # === END SHAPE PATCH ===
-
         classifier_loss = F.cross_entropy(all_preds, all_y)
         opt.zero_grad()
         classifier_loss.backward()
